@@ -1,75 +1,52 @@
 -- ============================================================
--- 3D HOLOGRAM GLOBE + TWD ONLINE 3 ULTIMATE V5 + STRICT GAME DETECT
+-- TWD ONLINE 3 ULTIMATE V5.0 - FULL SCRIPT
 -- ============================================================
+print("LOADING TWD ONLINE 3 ULTIMATE V5.0")
+
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
+local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
 local MarketplaceService = game:GetService("MarketplaceService")
-local SoundService = game:GetService("SoundService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+local Lighting = game:GetService("Lighting")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+local Camera = Workspace.CurrentCamera
 
--- CONFIG
+-- ============================================================
+-- GAME DETECTION
+-- ============================================================
+local currentGameId = game.PlaceId
+local TARGET_PLACE_ID = 128039018996175
+local isTWDGame = (currentGameId == TARGET_PLACE_ID)
+
+print("Target: " .. TARGET_PLACE_ID .. " | Current: " .. currentGameId .. " | Valid: " .. tostring(isTWDGame))
+
+-- ============================================================
+-- CLEANUP
+-- ============================================================
+if PlayerGui:FindFirstChild("HoloGlobeLoading") then PlayerGui.HoloGlobeLoading:Destroy() end
+if PlayerGui:FindFirstChild("TWD_PerfectGalaxy_Loading") then PlayerGui.TWD_PerfectGalaxy_Loading:Destroy() end
+if PlayerGui:FindFirstChild("TWD_ESP") then PlayerGui.TWD_ESP:Destroy() end
+
+-- ============================================================
+-- KEY SYSTEM
+-- ============================================================
 local API_KEY = "vBgMcQWPSGC0TI+7SRbkUj4jV270cZ3WCUoMM2+xvZ8=_MDKBL0Rnd78Y335hhyfVfnlLwMQAI5hWDCTlECrlqNI0AIZesUchNUKBrezL9TvB4UV"
 local BASE_URL = "https://modkey.host/api/v2"
 local SOFT_ID = "797"
 local GET_KEY_URL = "https://discord.gg/A4nndexwD"
 
--- ============================================================
--- STRICT GAME DETECTION SYSTEM (TWD ONLINE 3 ONLY)
--- ============================================================
-local currentGameId = game.PlaceId
-local currentUniverseId = game.GameId
-
--- Target Place ID TWD Online 3
-local TARGET_PLACE_ID = 128039018996175
-
-local detectedGameName = "THE WALKING DEAD ONLINE 3"
-local successGame, gameInfo = pcall(function()
-    return MarketplaceService:GetProductInfo(currentGameId)
-end)
-
-if successGame and gameInfo and gameInfo.Name then
-    detectedGameName = string.upper(gameInfo.Name)
-end
-
--- Pengecekan ketat berdasarkan PlaceId spesifik
-local isTWDGame = (currentGameId == TARGET_PLACE_ID)
-
-print("----------------------------------------------------------")
-print("Strict Game Detection Check:")
-print("-> Target PlaceId : " .. tostring(TARGET_PLACE_ID))
-print("-> Current PlaceId: " .. tostring(currentGameId))
-print("-> Game Name      : " .. detectedGameName)
-print("-> Is Valid Game  : " .. tostring(isTWDGame))
-print("----------------------------------------------------------")
-
--- Cleanup Existing UI
-if PlayerGui:FindFirstChild("HoloGlobeLoading") then
-    PlayerGui.HoloGlobeLoading:Destroy()
-end
-if PlayerGui:FindFirstChild("TWD_PerfectGalaxy_Loading") then
-    PlayerGui.TWD_PerfectGalaxy_Loading:Destroy()
-end
-
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "HoloGlobeLoading"
-screenGui.ResetOnSpawn = false
-screenGui.IgnoreGuiInset = true
-screenGui.DisplayOrder = 999
-screenGui.Parent = PlayerGui
-
 local function httpRequest(url, method, headers)
-    local requestFunc = (syn and syn.request) or (http and http.request) or http_request or request or (fluxus and fluxus.request)
-    if requestFunc then
-        local response = requestFunc({
-            Url = url,
-            Method = method or "GET",
-            Headers = headers or {}
-        })
-        if type(response) == "table" then return response.Body else return response end
+    local rf = (syn and syn.request) or (http and http.request) or http_request or request
+    if rf then
+        local res = rf({ Url = url, Method = method or "GET", Headers = headers or {} })
+        if type(res) == "table" then return res.Body else return res end
     else
         return game:HttpGet(url)
     end
@@ -77,31 +54,277 @@ end
 
 local function copyToClipboard(text)
     if setclipboard then setclipboard(text)
-    elseif toclipboard then toclipboard(text)
-    elseif Synapse and Synapse.set_clipboard then Synapse.set_clipboard(text) end
+    elseif toclipboard then toclipboard(text) end
 end
 
-local function parseExpDate(data)
-    if type(data) ~= "table" then return "Lifetime" end
-    local rawExp = data.expired_date or data.expires_at or data.expired_at or data.expire_date or data.expiration or data.expired
+local function verifyModkey(inputKey)
+    local endpoint = string.format("%s/softs/%s/keys/%s", BASE_URL, SOFT_ID, HttpService:UrlEncode(inputKey))
+    local headers = { ["Authorization"] = "Bearer " .. API_KEY, ["Content-Type"] = "application/json" }
+    local success, body = pcall(function() return httpRequest(endpoint, "GET", headers) end)
+    if success and body then
+        local ok, res = pcall(function() return HttpService:JSONDecode(body) end)
+        if ok and res and res.ok == true and res.data then
+            local data = res.data
+            if data.active == 0 then return false, "Key Expired" end
+            if data.status == 0 then return false, "Key Disabled" end
+            local rawExp = data.expired_date or data.expires_at
+            if rawExp then
+                local num = tonumber(rawExp)
+                if num then
+                    if num > 20000000000 then num = math.floor(num / 1000) end
+                    if num > 0 and os.time() > num then return false, "Key Expired" end
+                end
+            end
+            return true, "License Valid", data
+        else
+            return false, res and res.message or "Invalid Key"
+        end
+    end
+    return false, "Connection Failed"
+end
+
+-- ============================================================
+-- KEY SYSTEM UI (HOLO GLOBE)
+-- ============================================================
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "HoloGlobeLoading"
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+screenGui.DisplayOrder = 999
+screenGui.Parent = PlayerGui
+
+local bg = Instance.new("Frame")
+bg.Size = UDim2.new(1, 0, 1, 0)
+bg.BackgroundColor3 = Color3.fromRGB(6, 8, 14)
+bg.BorderSizePixel = 0
+bg.ClipsDescendants = true
+bg.Parent = screenGui
+
+local card = Instance.new("Frame")
+card.Size = UDim2.new(0, 400, 0, 280)
+card.Position = UDim2.new(0.5, 0, 0.5, 0)
+card.AnchorPoint = Vector2.new(0.5, 0.5)
+card.BackgroundColor3 = Color3.fromRGB(10, 14, 22)
+card.BackgroundTransparency = 0.15
+card.BorderSizePixel = 0
+card.ClipsDescendants = true
+card.Parent = bg
+
+local cardCorner = Instance.new("UICorner")
+cardCorner.CornerRadius = UDim.new(0, 24)
+cardCorner.Parent = card
+
+local cardStroke = Instance.new("UIStroke")
+cardStroke.Color = isTWDGame and Color3.fromRGB(0, 220, 255) or Color3.fromRGB(255, 50, 75)
+cardStroke.Transparency = 0.3
+cardStroke.Thickness = 2
+cardStroke.Parent = card
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -40, 0, 30)
+title.Position = UDim2.new(0, 20, 0, 20)
+title.BackgroundTransparency = 1
+title.Text = "TWD ONLINE 3 V5.0"
+title.TextColor3 = isTWDGame and Color3.fromRGB(0, 240, 255) or Color3.fromRGB(255, 80, 100)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 15
+title.TextXAlignment = Enum.TextXAlignment.Center
+title.Parent = card
+
+local status = Instance.new("TextLabel")
+status.Size = UDim2.new(1, -40, 0, 20)
+status.Position = UDim2.new(0, 20, 0, 58)
+status.BackgroundTransparency = 1
+status.Text = isTWDGame and "Awaiting license key..." or "Wrong Game!"
+status.TextColor3 = isTWDGame and Color3.fromRGB(170, 190, 220) or Color3.fromRGB(255, 80, 80)
+status.Font = Enum.Font.GothamMedium
+status.TextSize = 11
+status.TextXAlignment = Enum.TextXAlignment.Center
+status.Parent = card
+
+local keyBox = Instance.new("Frame")
+keyBox.Size = UDim2.new(0, 280, 0, 36)
+keyBox.Position = UDim2.new(0.5, 0, 0, 92)
+keyBox.AnchorPoint = Vector2.new(0.5, 0)
+keyBox.BackgroundColor3 = Color3.fromRGB(6, 8, 14)
+keyBox.BackgroundTransparency = 0.3
+keyBox.BorderSizePixel = 0
+keyBox.Parent = card
+
+local keyCorner = Instance.new("UICorner")
+keyCorner.CornerRadius = UDim.new(0, 8)
+keyCorner.Parent = keyBox
+
+local keyStroke = Instance.new("UIStroke")
+keyStroke.Color = isTWDGame and Color3.fromRGB(0, 200, 255) or Color3.fromRGB(255, 50, 75)
+keyStroke.Transparency = 0.7
+keyStroke.Thickness = 1
+keyStroke.Parent = keyBox
+
+local input = Instance.new("TextBox")
+input.Size = UDim2.new(1, -20, 1, 0)
+input.Position = UDim2.new(0, 10, 0, 0)
+input.BackgroundTransparency = 1
+input.PlaceholderText = isTWDGame and "Paste License Key Here..." or "Unsupported Game!"
+input.PlaceholderColor3 = Color3.fromRGB(90, 110, 140)
+input.Text = ""
+input.TextColor3 = Color3.fromRGB(255, 255, 255)
+input.Font = Enum.Font.GothamMedium
+input.TextSize = 11
+input.ClearTextOnFocus = false
+input.Parent = keyBox
+
+local btnContainer = Instance.new("Frame")
+btnContainer.Size = UDim2.new(0, 280, 0, 32)
+btnContainer.Position = UDim2.new(0.5, 0, 0, 142)
+btnContainer.AnchorPoint = Vector2.new(0.5, 0)
+btnContainer.BackgroundTransparency = 1
+btnContainer.Parent = card
+
+local btnGet = Instance.new("TextButton")
+btnGet.Size = UDim2.new(0.46, 0, 1, 0)
+btnGet.Position = UDim2.new(0, 0, 0, 0)
+btnGet.BackgroundColor3 = Color3.fromRGB(88, 101, 242)
+btnGet.Text = "GET KEY"
+btnGet.TextColor3 = Color3.fromRGB(255, 255, 255)
+btnGet.Font = Enum.Font.GothamBold
+btnGet.TextSize = 10
+btnGet.BorderSizePixel = 0
+btnGet.Parent = btnContainer
+
+local btnCorner = Instance.new("UICorner")
+btnCorner.CornerRadius = UDim.new(0, 8)
+btnCorner.Parent = btnGet
+
+local btnVerify = Instance.new("TextButton")
+btnVerify.Size = UDim2.new(0.46, 0, 1, 0)
+btnVerify.Position = UDim2.new(0.54, 0, 0, 0)
+btnVerify.BackgroundColor3 = isTWDGame and Color3.fromRGB(0, 200, 255) or Color3.fromRGB(100, 100, 100)
+btnVerify.Text = "VERIFY"
+btnVerify.TextColor3 = Color3.fromRGB(6, 8, 14)
+btnVerify.Font = Enum.Font.GothamBold
+btnVerify.TextSize = 10
+btnVerify.BorderSizePixel = 0
+btnVerify.Parent = btnContainer
+
+local btnCorner2 = Instance.new("UICorner")
+btnCorner2.CornerRadius = UDim.new(0, 8)
+btnCorner2.Parent = btnVerify
+
+local progBg = Instance.new("Frame")
+progBg.Size = UDim2.new(0, 280, 0, 4)
+progBg.Position = UDim2.new(0.5, 0, 0, 192)
+progBg.AnchorPoint = Vector2.new(0.5, 0)
+progBg.BackgroundColor3 = Color3.fromRGB(20, 28, 42)
+progBg.BorderSizePixel = 0
+progBg.Parent = card
+
+local progCorner = Instance.new("UICorner")
+progCorner.CornerRadius = UDim.new(1, 0)
+progCorner.Parent = progBg
+
+local progFill = Instance.new("Frame")
+progFill.Size = UDim2.new(0, 0, 1, 0)
+progFill.BackgroundColor3 = isTWDGame and Color3.fromRGB(0, 240, 255) or Color3.fromRGB(255, 50, 75)
+progFill.BorderSizePixel = 0
+progFill.Parent = progBg
+
+local fillCorner = Instance.new("UICorner")
+fillCorner.CornerRadius = UDim.new(1, 0)
+fillCorner.Parent = progFill
+
+local function setProgress(pct, text)
+    local clamped = math.clamp(pct, 0, 100)
+    TweenService:Create(progFill, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+        Size = UDim2.new(clamped / 100, 0, 1, 0)
+    }):Play()
+    if text then status.Text = text end
+end
+
+btnGet.MouseButton1Click:Connect(function()
+    copyToClipboard(GET_KEY_URL)
+    status.TextColor3 = Color3.fromRGB(0, 255, 150)
+    status.Text = "Discord link copied!"
+    task.delay(2, function()
+        if not verifying then
+            status.TextColor3 = Color3.fromRGB(170, 190, 220)
+            status.Text = isTWDGame and "Awaiting license key..." or "Wrong Game!"
+        end
+    end)
+end)
+
+if not isTWDGame then
+    task.spawn(function()
+        for i = 3, 1, -1 do
+            status.Text = "Wrong game! Kicking in " .. i .. "s..."
+            task.wait(1)
+        end
+        LocalPlayer:Kick("Script restricted to The Walking Dead Online 3")
+    end)
+end
+
+local verifying = false
+btnVerify.MouseButton1Click:Connect(function()
+    if not isTWDGame then
+        status.TextColor3 = Color3.fromRGB(255, 80, 80)
+        status.Text = "Access Denied: Wrong Game!"
+        LocalPlayer:Kick("Script restricted to The Walking Dead Online 3")
+        return
+    end
+    if verifying then return end
+    local key = string.gsub(input.Text, "%s+", "")
+    if key == "" then
+        status.TextColor3 = Color3.fromRGB(255, 80, 80)
+        status.Text = "Key cannot be empty!"
+        return
+    end
+    verifying = true
+    btnVerify.Text = "CHECKING..."
+    status.TextColor3 = Color3.fromRGB(0, 240, 255)
+    setProgress(30, "Connecting to Server...")
+    task.spawn(function()
+        local ok, msg, data = verifyModkey(key)
+        if ok then
+            setProgress(75, "Key Authenticated!")
+            task.wait(0.5)
+            setProgress(100, "System Ready!")
+            status.TextColor3 = Color3.fromRGB(0, 255, 150)
+            btnVerify.Text = "LOADING..."
+            btnVerify.BackgroundColor3 = Color3.fromRGB(0, 255, 150)
+            task.wait(0.5)
+            screenGui:Destroy()
+            print("KEY VALID - LOADING MAIN SCRIPT")
+            startMainScript()
+        else
+            setProgress(0, "Auth Failed: " .. msg)
+            status.TextColor3 = Color3.fromRGB(255, 80, 80)
+            btnVerify.Text = "VERIFY"
+            btnVerify.BackgroundColor3 = isTWDGame and Color3.fromRGB(0, 200, 255) or Color3.fromRGB(100, 100, 100)
+            verifying = false
+        end
+    end)
+end)
+
+print("HoloGlobe Loading Screen Active - Waiting for Key Input...")
+
+-- ============================================================
+-- ============================================================
+-- MAIN SCRIPT V5 (LENGKAP DI BAWAH)
+-- ============================================================
+-- ============================================================
+function startMainScript()
+    print("MAIN SCRIPT V5 STARTED")
     
-    if not rawExp or rawExp == "" or rawExp == 0 then return "Lifetime" end
-
-    local expStr = tostring(rawExp)
-    if string.lower(expStr) == "lifetime" or string.lower(expStr) == "never" or rawExp == -1 then
-        return "Lifetime"
+    local success, err = pcall(function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/aslcc2/The-walking-Dead-online-3-beta/main/TWD_Ultimate_V5.lua"))()
+    end)
+    
+    if not success then
+        print("Error: " .. tostring(err))
     end
+end
 
-    local numTime = tonumber(rawExp)
-    if numTime then
-        if numTime > 20000000000 then numTime = math.floor(numTime / 1000) end
-        if numTime > 0 then return os.date("%Y-%m-%d %H:%M", numTime) end
-    end
-
-    local year, month, day, hour, min = string.match(expStr, "(%d%d%d%d)[%-%/](%d%d)[%-%/](%d%d)[%sT]?(%d?%d?):?(%d?%d?)")
-    if year and month and day then
-        if hour ~= "" and min ~= "" then
-            return string.format("%s-%s-%s %s:%s", year, month, day, hour, min)
+print("Waiting for key input...")            return string.format("%s-%s-%s %s:%s", year, month, day, hour, min)
         end
         return string.format("%s-%s-%s", year, month, day)
     end
